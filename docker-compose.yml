@@ -50,15 +50,36 @@ services:
       - fintech-network
 
   # Placeholders for future services
-  # spark-processor:
-  #   build: ./services/spark-processor
-  #   networks:
-  #     - fintech-network
+  spark-processor:
+    build: ./services/spark-processor
+    container_name: fintech-spark-processor
+    depends_on:
+      - kafka
+    command: /opt/spark/bin/spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,org.postgresql:postgresql:42.6.0 processor.py
+    environment:
+      - DB_URL=jdbc:postgresql://postgres:5432/fintech
+      - DB_USER=user
+      - DB_PASSWORD=password
+    volumes:
+      - ./models:/app/models
+    networks:
+      - fintech-network
 
-  # spring-api:
-  #   build: ./services/spring-api
-  #   networks:
-  #     - fintech-network
+  spring-api:
+    build:
+      context: ./services/spring-api
+    container_name: fintech-spring-api
+    ports:
+      - "8080:8080"
+    environment:
+      - DB_URL=jdbc:postgresql://postgres:5432/fintech
+      - DB_USER=user
+      - DB_PASSWORD=password
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - fintech-network
 
   kafka-producer-python:
     build: ./services/kafka-producer-python

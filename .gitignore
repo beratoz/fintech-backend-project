@@ -1,0 +1,21 @@
+# System & IDE
+.vscode/
+.idea/
+*.log
+__pycache__/
+*.pyc
+
+# Docker Data
+data/
+db-data/
+postgres-data/
+
+# Python
+env/
+venv/
+.env
+
+# Java / Maven
+target/
+*.class
+*.jar
