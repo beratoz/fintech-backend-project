@@ -81,6 +81,19 @@ services:
     networks:
       - fintech-network
 
+  dashboard:
+    build: ./services/dashboard
+    container_name: fintech-dashboard
+    ports:
+      - "8501:8501"
+    environment:
+      - DB_URL=postgresql://user:password@postgres:5432/fintech
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - fintech-network
+
   kafka-producer-python:
     build: ./services/kafka-producer-python
     container_name: fintech-producer-python
