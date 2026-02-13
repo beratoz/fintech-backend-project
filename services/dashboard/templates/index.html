@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fintech Real-Time Dashboard</title>
+    <meta name="description" content="Real-time fintech stock analysis dashboard with D3.js interactive charts">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-left">
+            <div class="logo">
+                <span class="logo-icon">📈</span>
+                <h1>Fintech Dashboard</h1>
+            </div>
+        </div>
+        <div class="header-center">
+            <div class="ticker-selector">
+                <label for="tickerSelect">Hisse Senedi</label>
+                <select id="tickerSelect">
+                    <option value="">Yükleniyor...</option>
+                </select>
+            </div>
+        </div>
+        <div class="header-right">
+            <div class="auto-refresh-toggle">
+                <label class="switch">
+                    <input type="checkbox" id="autoRefreshToggle" checked>
+                    <span class="slider"></span>
+                </label>
+                <span class="refresh-label">Otomatik Yenile</span>
+            </div>
+            <div class="connection-status" id="connectionStatus">
+                <span class="status-dot connected"></span>
+                <span>Bağlı</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <!-- KPI Cards Row -->
+        <section class="kpi-row">
+            <div class="kpi-card" id="kpiPrice">
+                <div class="kpi-label">Güncel Fiyat</div>
+                <div class="kpi-value" id="kpiPriceValue">--</div>
+                <div class="kpi-sub" id="kpiPriceSub">Bekleniyor...</div>
+            </div>
+            <div class="kpi-card" id="kpiSignal">
+                <div class="kpi-label">Son Sinyal</div>
+                <div class="kpi-value" id="kpiSignalValue">--</div>
+                <div class="kpi-sub" id="kpiSignalSub">&nbsp;</div>
+            </div>
+            <div class="kpi-card" id="kpiRSI">
+                <div class="kpi-label">RSI (14)</div>
+                <div class="kpi-value" id="kpiRSIValue">--</div>
+                <div class="kpi-sub" id="kpiRSISub">&nbsp;</div>
+            </div>
+            <div class="kpi-card" id="kpiSentiment">
+                <div class="kpi-label">Sentiment Skoru</div>
+                <div class="kpi-value" id="kpiSentimentValue">--</div>
+                <div class="kpi-sub" id="kpiSentimentSub">&nbsp;</div>
+            </div>
+        </section>
+
+        <!-- Period Selection + Chart -->
+        <section class="chart-section">
+            <div class="chart-header">
+                <h2 id="chartTitle">Fiyat Grafiği</h2>
+                <div class="period-buttons">
+                    <button class="period-btn" data-period="1w">1 Hafta</button>
+                    <button class="period-btn active" data-period="1m">1 Ay</button>
+                    <button class="period-btn" data-period="3m">3 Ay</button>
+                    <button class="period-btn" data-period="1y">1 Yıl</button>
+                    <button class="period-btn" data-period="3y">3 Yıl</button>
+                </div>
+            </div>
+            <div class="chart-container" id="priceChart">
+                <div class="chart-placeholder" id="chartPlaceholder">
+                    <span class="placeholder-icon">📊</span>
+                    <p>Bir hisse senedi seçerek grafik görüntüleyin</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Stats Row -->
+        <section class="stats-row">
+            <div class="stats-card">
+                <h3>Dönem İstatistikleri</h3>
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <span class="stat-label">Toplam Sinyal</span>
+                        <span class="stat-value" id="statTotal">--</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">AL Sinyalleri</span>
+                        <span class="stat-value buy" id="statBuy">--</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">TUT Sinyalleri</span>
+                        <span class="stat-value hold" id="statHold">--</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Min Fiyat</span>
+                        <span class="stat-value" id="statMin">--</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Max Fiyat</span>
+                        <span class="stat-value" id="statMax">--</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Ort. Fiyat</span>
+                        <span class="stat-value" id="statAvg">--</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Raw Data Table -->
+        <section class="data-section">
+            <div class="data-header" id="dataToggle">
+                <h3>Son Veriler</h3>
+                <button class="expand-btn" id="expandBtn">▼</button>
+            </div>
+            <div class="data-table-container" id="dataTableContainer" style="display:none;">
+                <table class="data-table" id="dataTable">
+                    <thead>
+                        <tr>
+                            <th>Tarih</th>
+                            <th>Ticker</th>
+                            <th>Fiyat</th>
+                            <th>Sinyal</th>
+                            <th>RSI</th>
+                            <th>Sentiment</th>
+                        </tr>
+                    </thead>
+                    <tbody id="dataTableBody">
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <p>Fintech Real-Time Dashboard &bull; D3.js Visualization &bull; PostgreSQL Data Source</p>
+    </footer>
+
+    <!-- Tooltip for D3 chart -->
+    <div class="chart-tooltip" id="chartTooltip" style="display:none;">
+        <div class="tooltip-date" id="tooltipDate"></div>
+        <div class="tooltip-price" id="tooltipPrice"></div>
+        <div class="tooltip-signal" id="tooltipSignal"></div>
+    </div>
+
+    <!-- D3.js CDN -->
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <!-- Dashboard JS -->
+    <script src="/static/js/dashboard.js"></script>
+</body>
+</html>

@@ -1,5 +1,5 @@
-# Base Image (Reusing local producer image to avoid network pull)
-FROM fintech-backend-project-kafka-producer-python:latest
+# Base Image
+FROM python:3.9-slim
 
 # Working Directory
 WORKDIR /app
@@ -11,8 +11,8 @@ RUN pip install --default-timeout=1000 --no-cache-dir -r requirements.txt
 # Copy App Code
 COPY . .
 
-# Expose Streamlit Port
+# Expose Dashboard Port
 EXPOSE 8501
 
-# Command
-CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+# Command - Use gunicorn for production
+CMD ["gunicorn", "--bind", "0.0.0.0:8501", "--workers", "2", "--timeout", "120", "app:app"]

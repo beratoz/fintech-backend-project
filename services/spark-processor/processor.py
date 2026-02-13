@@ -78,25 +78,9 @@ def process_batch(batch_df, batch_id):
         if ticker not in HISTORY_BUFFER:
             HISTORY_BUFFER[ticker] = pd.DataFrame()
         
-        # 2. Append to History
-        # We need to explicitly name columns to match train_model expectations
-        # train_model expects: Close, Ticker, ^TNX, DX-Y.NYB (implied via enrichment)
-        # Actually our producer sends *Changes* (tnx_chg), but train_model.add_features calculates changes from raw values.
-        # We need to ADAPT.
-        # process_batch receives `tnx_chg`, `dxy_chg`.
-        # train_model.add_features calculates:
-        #   group["TNX_Chg"] = group["^TNX"].diff().fillna(0)
-        # We ALREADY have TNX_Chg. So we should SKIP calculate_features logic that regenerates it, 
-        # OR mock the raw values so the diff works. 
-        # Easier: Modify the group dataframe to HAVE the columns expected by the model's `predict` call.
-        # The Model was trained on features: [Log_Ret, Log_Ret_Lag1..., RSI, MACD..., ATR, TNX_Chg, DXY_Chg, Month, Sentiment_Score]
-        
-        # Let's map incoming enriched data to a DF that `add_features` CAN process for Technicals, 
-        # and then manually inject the Macro features we already have.
-        
         # Prepare valid DF for History
-        # We only really need 'Close' for Technicals.
-        clean_group = group[['timestamp', 'price', 'ticker', 'tnx_chg', 'dxy_chg', 'sentiment_score']].copy()
+        # We only really need 'Close' for Technicals + macro/sentiment for LIVE predictions.
+        clean_group = group[['timestamp', 'price', 'ticker', 'data_type', 'tnx_chg', 'dxy_chg', 'sentiment_score']].copy()
         clean_group.rename(columns={'price': 'Close', 'ticker': 'Ticker'}, inplace=True)
         clean_group.set_index('timestamp', inplace=True)
         
@@ -158,12 +142,16 @@ def process_batch(batch_df, batch_id):
         # 6. Sentiment
         full_hist["Sentiment_Score"] = full_hist["sentiment_score"]
         
-        # Select Features and Predict on ONLY the new rows (the ones in group)
-        # Identify new rows by index
-        new_indices = clean_group.index
-        # Intersection might be needed if buffer truncated valid new rows (unlikely with buffer=100)
+        # Select Features and Predict on ONLY the new LIVE rows
+        # HISTORY data is only used for buffer/technical calculations, not for predictions
+        live_indices = clean_group[clean_group['data_type'] == 'LIVE'].index
+        candidate_indices = full_hist.index.intersection(live_indices)
         
-        preds_df = full_hist.loc[full_hist.index.intersection(new_indices)].copy()
+        if candidate_indices.empty:
+            print(f"Skipping {ticker}: No LIVE data in this batch (HISTORY only, buffered for technicals)")
+            continue
+        
+        preds_df = full_hist.loc[candidate_indices].copy()
         
         if preds_df.empty:
             continue
@@ -258,7 +246,7 @@ df = spark.readStream \
     .format("kafka") \
     .option("kafka.bootstrap.servers", "kafka:29092") \
     .option("subscribe", "stock-prices") \
-    .option("startingOffsets", "latest") \
+    .option("startingOffsets", "earliest") \
     .load()
 
 # Parse

@@ -48,14 +48,21 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
     networks:
       - fintech-network
+    healthcheck:
+      test: [ "CMD", "kafka-topics", "--bootstrap-server", "localhost:29092", "--list" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
   # Placeholders for future services
   spark-processor:
     build: ./services/spark-processor
     container_name: fintech-spark-processor
     depends_on:
-      - kafka
-    command: /opt/spark/bin/spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,org.postgresql:postgresql:42.6.0 processor.py
+      kafka:
+        condition: service_healthy
+    command: /opt/spark/bin/spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,org.postgresql:postgresql:42.6.0 --repositories https://repo1.maven.org/maven2 processor.py
     environment:
       - DB_URL=jdbc:postgresql://postgres:5432/fintech
       - DB_USER=user
@@ -98,7 +105,8 @@ services:
     build: ./services/kafka-producer-python
     container_name: fintech-producer-python
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
     networks:
       - fintech-network
 

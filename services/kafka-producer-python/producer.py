@@ -60,7 +60,7 @@ def fetch_history(ticker_symbol):
     logger.info(f"Fetching history for {ticker_symbol}...")
     try:
         ticker = yf.Ticker(ticker_symbol)
-        history = ticker.history(period="1y")
+        history = ticker.history(period="5y")
         
         records = []
         for index, row in history.iterrows():
