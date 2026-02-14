@@ -16,5 +16,5 @@ RUN pip install yfinance==0.2.40 --default-timeout=1000
 COPY processor.py .
 COPY train_model.py .
 
-# No extra pip requirements needed for basic pyspark execution in this image
-# but if needed later, we can add them here.
+# Train the ML model during build so it's baked into the image
+RUN python3 train_model.py

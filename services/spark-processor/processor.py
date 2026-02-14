@@ -32,7 +32,8 @@ schema = StructType([
 # Global State for History (In-Memory for MVP)
 # { "AAPL": pd.DataFrame(...), ... }
 HISTORY_BUFFER = {}
-BUFFER_SIZE = 100 # Keep last 100 records for lag calculation
+BUFFER_SIZE = 2000 # Keep enough records for good technical indicators
+BUY_THRESHOLD = 0.20  # Lower than default 0.50 since model is conservative
 MODEL = None
 MODEL_PATH = "/app/models/fintech_model.pkl"
 
@@ -86,21 +87,15 @@ def process_batch(batch_df, batch_id):
         
         # Update Buffer
         HISTORY_BUFFER[ticker] = pd.concat([HISTORY_BUFFER[ticker], clean_group])
+        # Deduplicate: keep only the last entry per timestamp to avoid flat features
+        HISTORY_BUFFER[ticker] = HISTORY_BUFFER[ticker][~HISTORY_BUFFER[ticker].index.duplicated(keep='last')]
         # Sort and Truncate
         HISTORY_BUFFER[ticker].sort_index(inplace=True)
         if len(HISTORY_BUFFER[ticker]) > BUFFER_SIZE:
              HISTORY_BUFFER[ticker] = HISTORY_BUFFER[ticker].iloc[-BUFFER_SIZE:]
         
         # 3. Calculate Features (e.g. RSI, MACD) on the buffer
-        # We reuse train_model.add_features BUT it recalculates macros. 
-        # We need to be careful.
-        # Let's effectively "Monkey Patch" or carefully copy the logic we need.
-        # train_model.add_features does A LOT. Let's just run it, but ensure we have columns it needs or ignore errors.
-        # BUT `add_features` expects ^TNX column to exist to calculate diff.
-        # We don't have raw ^TNX. We have tnx_chg.
-        # We should create a helper here or modify `add_features` to be flexible.
-        # Modifying `add_features` is risky for the verify task.
-        # We will manually calculate the technicals here using the same `ta` calls.
+        # We manually calculate the technicals using the same `ta` calls as training.
         
         full_hist = HISTORY_BUFFER[ticker].copy()
         
@@ -131,7 +126,6 @@ def process_batch(batch_df, batch_id):
         full_hist["ATR"] = atr.average_true_range().fillna(0)
         
         # 4. Macro (Already have Chg, map to correct names)
-        # Incoming: tnx_chg, dxy_chg. Model expects: TNX_Chg, DXY_Chg
         full_hist["TNX_Chg"] = full_hist["tnx_chg"]
         full_hist["DXY_Chg"] = full_hist["dxy_chg"]
         
@@ -142,103 +136,92 @@ def process_batch(batch_df, batch_id):
         # 6. Sentiment
         full_hist["Sentiment_Score"] = full_hist["sentiment_score"]
         
-        # Select Features and Predict on ONLY the new LIVE rows
-        # HISTORY data is only used for buffer/technical calculations, not for predictions
-        live_indices = clean_group[clean_group['data_type'] == 'LIVE'].index
-        candidate_indices = full_hist.index.intersection(live_indices)
+        # ── Write ALL new rows to DB with ML predictions ────────────────
+        # Get only rows that are new in this batch
+        new_indices = clean_group.index
+        batch_indices = full_hist.index.intersection(new_indices)
+        batch_df_to_write = full_hist.loc[batch_indices].copy()
         
-        if candidate_indices.empty:
-            print(f"Skipping {ticker}: No LIVE data in this batch (HISTORY only, buffered for technicals)")
+        # Deduplicate batch by index (timestamp) — keep last
+        batch_df_to_write = batch_df_to_write[~batch_df_to_write.index.duplicated(keep='last')]
+        
+        if batch_df_to_write.empty:
             continue
         
-        preds_df = full_hist.loc[candidate_indices].copy()
+        # Default prediction = 0 (HOLD)
+        batch_df_to_write['_prediction'] = 0
         
-        if preds_df.empty:
-            continue
-            
-        # Feature Columns matching training
+        # Run ML model on ALL rows that have enough feature history
         if model:
-
             try:
-                # DYNAMIC FEATURE ALIGNMENT
-                # Ensure we use exactly the same features as training
                 required_features = list(model.feature_names_in_)
                 
-                # Check for missing columns and fill with 0
+                # Ensure all required features exist
                 for feature in required_features:
-                    if feature not in preds_df.columns:
-                        # print(f"Warning: Missing feature {feature}, filling with 0")
-                        preds_df[feature] = 0.0
+                    if feature not in batch_df_to_write.columns:
+                        batch_df_to_write[feature] = 0.0
                 
-                # Reorder columns to match model
-                X = preds_df[required_features].fillna(0)
-                        
-                # Predict labels and probs
-                predictions = model.predict(X)
-                # probs = model.predict_proba(X)[:, 1] # Optional
+                # Use predict_proba with lower threshold for BUY signals
+                predict_df = batch_df_to_write[required_features].fillna(0)
+                probas = model.predict_proba(predict_df)[:, 1]  # probability of class 1 (BUY)
+                predictions = (probas >= BUY_THRESHOLD).astype(int)
+                batch_df_to_write['_prediction'] = predictions
                 
-                rows_to_insert = []
-                
-                for idx, (date, row, pred) in enumerate(zip(preds_df.index, preds_df.iterrows(), predictions)):
-                    _, data = row
+                buy_count = sum(predictions == 1)
+                hold_count = sum(predictions == 0)
+                print(f"ML | {ticker} | {len(predictions)} predictions: {buy_count} BUY, {hold_count} HOLD (max_proba={probas.max():.3f})")
                     
-                    # Extract indicators for JSON
-                    indicators_dict = {
-                        "RSI": float(data["RSI"]),
-                        "MACD": float(data["MACD"]),
-                        "ATR": float(data["ATR"]),
-                        "Sentiment": float(data["Sentiment_Score"])
-                    }
-                    
-                    rows_to_insert.append({
-                        "ticker": str(ticker),
-                        "timestamp": int(date.timestamp() * 1000), # MS timestamp
-                        "price": float(data["Close"]),
-                        "prediction": int(pred),
-                        "indicators": json.dumps(indicators_dict)
-                    })
-                    
-                    # Console Output
-                    action = "BUY 🟢" if pred == 1 else "HOLD ⚪"
-                    print(f"PREDICTION | {ticker} | {date} | Price: {data['Close']:.2f} | {action}")
-
-                if rows_to_insert:
-                    # Convert to Spark DataFrame
-                    result_pdf = pd.DataFrame(rows_to_insert)
-                    
-                    # Define Schema for Output
-                    res_schema = StructType([
-                        StructField("ticker", StringType(), True),
-                        StructField("timestamp", LongType(), True),
-                        StructField("price", FloatType(), True),
-                        StructField("prediction", IntegerType(), True),
-                        StructField("indicators", StringType(), True) # JSON string
-                    ])
-                    
-                    result_sdf = spark.createDataFrame(result_pdf, schema=res_schema)
-                    
-                    # Write to JDBC
-                    db_url = os.environ.get("DB_URL", "jdbc:postgresql://postgres:5432/fintech")
-                    if "stringtype" not in db_url:
-                        db_url += "?stringtype=unspecified"
-
-                    print(f"Writing {len(result_sdf.collect())} signals to DB...")
-                    result_sdf.write \
-                        .format("jdbc") \
-                        .option("url", db_url) \
-                        .option("dbtable", "trade_signals") \
-                        .option("user", os.environ.get("DB_USER", "user")) \
-                        .option("password", os.environ.get("DB_PASSWORD", "password")) \
-                        .option("driver", "org.postgresql.Driver") \
-                        .mode("append") \
-                        .save()
-                        
             except Exception as e:
-                print(f"Error processing/writing batch for {ticker}: {e}")
+                print(f"Error predicting for {ticker}: {e}")
+        
+        # Build rows for DB insertion
+        rows_to_insert = []
+        for date, data in batch_df_to_write.iterrows():
+            indicators_dict = {
+                "RSI": float(data.get("RSI", 50)),
+                "MACD": float(data.get("MACD", 0)),
+                "ATR": float(data.get("ATR", 0)),
+                "Sentiment": float(data.get("Sentiment_Score", 0))
+            }
+            rows_to_insert.append({
+                "ticker": str(ticker),
+                "timestamp": int(date.timestamp() * 1000),
+                "price": float(data["Close"]),
+                "prediction": int(data['_prediction']),
+                "indicators": json.dumps(indicators_dict)
+            })
+        
+        if rows_to_insert:
+            try:
+                result_pdf = pd.DataFrame(rows_to_insert)
+                
+                res_schema = StructType([
+                    StructField("ticker", StringType(), True),
+                    StructField("timestamp", LongType(), True),
+                    StructField("price", FloatType(), True),
+                    StructField("prediction", IntegerType(), True),
+                    StructField("indicators", StringType(), True)
+                ])
+                
+                result_sdf = spark.createDataFrame(result_pdf, schema=res_schema)
+                
+                db_url = os.environ.get("DB_URL", "jdbc:postgresql://postgres:5432/fintech")
+                if "stringtype" not in db_url:
+                    db_url += "?stringtype=unspecified"
 
-        else:
-            print("Model not loaded, skipping prediction.")
-            continue
+                print(f"Writing {len(rows_to_insert)} unique records for {ticker} to DB...")
+                result_sdf.write \
+                    .format("jdbc") \
+                    .option("url", db_url) \
+                    .option("dbtable", "trade_signals") \
+                    .option("user", os.environ.get("DB_USER", "user")) \
+                    .option("password", os.environ.get("DB_PASSWORD", "password")) \
+                    .option("driver", "org.postgresql.Driver") \
+                    .mode("append") \
+                    .save()
+                    
+            except Exception as e:
+                print(f"Error writing batch for {ticker}: {e}")
 
 
 # Read Stream

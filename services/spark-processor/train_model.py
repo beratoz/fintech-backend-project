@@ -25,7 +25,7 @@ MODEL_PATH = "/app/models/fintech_model.pkl"
 TRANSACTION_COST = 0.002  # 0.2% per trade (buy + sell)
 SLIPPAGE = 0.001          # 0.1% slippage
 STOP_LOSS = 0.02          # 2% max loss per trade
-TARGET_THRESHOLD = 0.015  # Target: Price must rise > 1.5%
+TARGET_THRESHOLD = 0.003  # Target: Price must rise > 0.3%
 
 def generate_synthetic_data(tickers):
     """Generates synthetic daily data (Stocks + Macro) for testing fallback."""
@@ -233,7 +233,7 @@ def walk_forward_validation(df):
         logger.warning("Not enough data for Walk-Forward. Training on full set only.")
         return
     
-    model = RandomForestClassifier(n_estimators=100, min_samples_leaf=5, random_state=42, n_jobs=-1)
+    model = RandomForestClassifier(n_estimators=100, min_samples_leaf=3, class_weight='balanced', random_state=42, n_jobs=-1)
     
     total_trades = 0
     winning_trades = 0
@@ -371,7 +371,7 @@ def train_final_model():
     X = df[feature_cols]
     y = df["Target"]
     
-    clf = RandomForestClassifier(n_estimators=100, min_samples_leaf=5, random_state=42)
+    clf = RandomForestClassifier(n_estimators=100, min_samples_leaf=3, class_weight='balanced', random_state=42)
     clf.fit(X, y)
     
     # 4. Save
